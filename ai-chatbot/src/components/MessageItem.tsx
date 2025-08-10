@@ -2,9 +2,30 @@
 
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Message } from '@/utils/perplexity';
+
+// Import SyntaxHighlighter using dynamic import to avoid SSR issues
+import dynamic from 'next/dynamic';
+
+const SyntaxHighlighter = dynamic(
+  () => import('react-syntax-highlighter').then((mod) => mod.Prism),
+  { ssr: false }
+);
+
+const CodeBlock = dynamic(
+  async () => {
+    const { vscDarkPlus } = await import('react-syntax-highlighter/dist/cjs/styles/prism');
+    
+    return ({ language, value }: { language: string; value: string }) => {
+      return (
+        <SyntaxHighlighter language={language} style={vscDarkPlus} PreTag="div">
+          {value}
+        </SyntaxHighlighter>
+      );
+    };
+  },
+  { ssr: false }
+);
 
 interface MessageItemProps {
   message: Message;
@@ -25,30 +46,31 @@ export default function MessageItem({ message }: MessageItemProps) {
         {isUser ? (
           <div className="whitespace-pre-wrap">{message.content}</div>
         ) : (
-          <ReactMarkdown
-            className="prose dark:prose-invert max-w-none"
-            components={{
-              code({ node, inline, className, children, ...props }) {
-                const match = /language-(\w+)/.exec(className || '');
-                return !inline && match ? (
-                  <SyntaxHighlighter
-                    style={vscDarkPlus}
-                    language={match[1]}
-                    PreTag="div"
-                    {...props}
-                  >
-                    {String(children).replace(/\n$/, '')}
-                  </SyntaxHighlighter>
-                ) : (
-                  <code className={className} {...props}>
-                    {children}
-                  </code>
-                );
-              },
-            }}
-          >
-            {message.content}
-          </ReactMarkdown>
+          <div className="prose dark:prose-invert max-w-none">
+            <ReactMarkdown
+              components={{
+                code({ node, inline, className, children, ...props }) {
+                  const match = /language-(\w+)/.exec(className || '');
+                  if (inline) {
+                    return (
+                      <code className={className} {...props}>
+                        {children}
+                      </code>
+                    );
+                  }
+                  
+                  const language = match ? match[1] : '';
+                  const value = String(children).replace(/\n$/, '');
+                  
+                  return (
+                    <CodeBlock language={language} value={value} />
+                  );
+                },
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+          </div>
         )}
       </div>
     </div>
