@@ -1,0 +1,1042 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cursor-like Web IDE (Single HTML)</title>
+
+  <!-- CodeMirror 5 core + modes (CDN) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/theme/material-darker.css">
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/css/css.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/xml/xml.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/closebrackets.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/matchbrackets.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/selection/active-line.min.js"></script>
+
+  <!-- Analysis libraries (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/jshint@2.13.6/dist/jshint.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/acorn@8.12.1/dist/acorn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/acorn-walk@8.3.2/dist/walk.min.js"></script>
+
+  <style>
+    /*
+      Cursor-like Web IDE styles
+      - Responsive layout with resizable editor/preview panes
+      - Dark theme aesthetics similar to Monaco/VS Code
+    */
+    :root {
+      --bg: #0f1115;
+      --bg-elev: #151922;
+      --panel: #0b0d12;
+      --text: #e6edf3;
+      --muted: #8b96a7;
+      --accent: #6ea8fe;
+      --accent-2: #7ee787;
+      --danger: #ff6b6b;
+      --warning: #ffb454;
+      --ok: #3ddc97;
+      --border: #242a33;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      line-height: 1.35;
+      overflow: hidden;
+    }
+
+    /* Top bar */
+    .topbar {
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+    }
+    .brand .logo {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, var(--accent), #9b7bff);
+      display: inline-block;
+    }
+    .brand .title {
+      letter-spacing: 0.3px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn {
+      height: 32px;
+      padding: 0 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #11141a;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .btn.primary {
+      background: linear-gradient(180deg, #1e2533 0%, #151a23 100%);
+      border-color: #2a3240;
+    }
+    .btn:hover { filter: brightness(1.07); }
+    .btn:active { filter: brightness(0.95); }
+
+    .status {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 0 8px;
+    }
+
+    /* Main layout */
+    .main {
+      position: absolute;
+      top: 48px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: grid;
+      grid-template-columns: 1fr 6px minmax(320px, 45%);
+      grid-template-rows: 100%;
+    }
+
+    /* Editor column */
+    .col-editor {
+      display: grid;
+      grid-template-rows: 36px 1fr 28px;
+      background: var(--bg);
+    }
+
+    .tabs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+    .tab {
+      padding: 6px 10px;
+      font-size: 13px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      color: var(--muted);
+      background: transparent;
+    }
+    .tab.active {
+      color: var(--text);
+      background: #0f141c;
+      border-color: var(--border);
+    }
+
+    .editor-host {
+      position: relative;
+      height: 100%;
+    }
+
+    /* CodeMirror styling tweaks for Monaco-like feel */
+    .CodeMirror {
+      height: 100% !important;
+      background: #0c1116;
+      color: var(--text);
+      font-size: 13px;
+    }
+    .CodeMirror-gutters {
+      background: #0c1116;
+      border-right: 1px solid var(--border);
+    }
+
+    .statusbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 4px 10px;
+      border-top: 1px solid var(--border);
+      background: var(--panel);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* Resizer */
+    .resizer {
+      background: var(--panel);
+      border-left: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      cursor: col-resize;
+    }
+    .resizer:hover { background: #171c25; }
+
+    /* Preview column */
+    .col-preview {
+      background: var(--bg-elev);
+      display: grid;
+      grid-template-rows: 36px 1fr;
+    }
+    .preview-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+      background: #0f141c;
+    }
+    .preview-title {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    iframe#preview {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: white;
+    }
+
+    /* Chat sidebar */
+    .chat-sidebar {
+      position: absolute;
+      top: 48px;
+      right: 0;
+      bottom: 0;
+      width: min(520px, 100%);
+      background: #0b0f15;
+      border-left: 1px solid var(--border);
+      transition: transform 0.2s ease;
+      transform: translateX(100%);
+      display: grid;
+      grid-template-rows: 48px 1fr auto;
+      z-index: 10;
+    }
+    .chat-sidebar.open { transform: translateX(0); }
+
+    .chat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+    .chat-title { font-weight: 600; }
+    .chat-settings {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .input, .select {
+      height: 28px;
+      border: 1px solid var(--border);
+      background: #0d1219;
+      color: var(--text);
+      padding: 0 8px;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+
+    .chat-messages {
+      padding: 12px;
+      overflow: auto;
+    }
+    .msg {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .msg.user { background: #0c141d; border: 1px solid #152033; }
+    .msg.ai { background: #0f141b; border: 1px solid #182335; }
+    .msg .role { font-size: 11px; color: var(--muted); display: block; margin-bottom: 4px; }
+
+    .chat-input {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      padding: 8px;
+      border-top: 1px solid var(--border);
+      background: var(--panel);
+    }
+    .chat-input textarea {
+      width: 100%;
+      min-height: 42px;
+      max-height: 120px;
+      resize: vertical;
+      border: 1px solid var(--border);
+      background: #0d1219;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px;
+      font-family: inherit;
+      font-size: 13px;
+    }
+
+    /* Sonar-pro quality panel */
+    .quality-panel {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      width: min(720px, calc(100% - 24px));
+      max-height: 50vh;
+      background: #0c1116;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+      display: none;
+      grid-template-rows: 40px 1fr;
+      z-index: 20;
+    }
+    .quality-panel.open { display: grid; }
+    .quality-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      font-size: 13px;
+    }
+    .quality-body { padding: 10px; overflow: auto; }
+    .issue { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
+    .issue .meta { font-size: 11px; color: var(--muted); }
+    .issue.error { border-color: #3b1f25; background: #151017; }
+    .issue.warning { border-color: #3b321f; background: #15130f; }
+    .issue.info { border-color: #1f2f3b; background: #0f1519; }
+
+    /* Toast */
+    .toast {
+      position: absolute;
+      right: 14px;
+      bottom: 14px;
+      padding: 10px 12px;
+      background: #0e1520;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      display: none;
+      z-index: 25;
+      font-size: 13px;
+    }
+    .toast.show { display: block; }
+
+    /* Small screens */
+    @media (max-width: 900px) {
+      .main { grid-template-columns: 1fr; }
+      .resizer, .col-preview { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Top Navigation / Toolbar -->
+  <div class="topbar">
+    <div class="brand">
+      <span class="logo"></span>
+      <span class="title">Web IDE</span>
+      <span class="status" id="statusText">Ready</span>
+    </div>
+    <div class="toolbar">
+      <button class="btn" id="btnLoadSample" title="Replace with a sample project">Sample</button>
+      <button class="btn" id="btnSave" title="Save to local storage">Save</button>
+      <button class="btn" id="btnReset" title="Reset to default starter">Reset</button>
+      <button class="btn primary" id="btnRun" title="Refresh live preview (Ctrl+Enter)">Run ▶</button>
+      <button class="btn" id="btnAnalyze" title="Run sonar-pro quality analysis">Analyze</button>
+      <button class="btn" id="btnChat" title="Toggle AI chat sidebar">Chat</button>
+    </div>
+  </div>
+
+  <!-- Main Split Layout -->
+  <div class="main">
+    <!-- Editor Column -->
+    <div class="col-editor">
+      <div class="tabs" id="tabs"></div>
+      <div class="editor-host" id="editorHost"></div>
+      <div class="statusbar">
+        <div id="cursorInfo">Ln 1, Col 1</div>
+        <div id="fileMeta">UTF-8 LF | HTML</div>
+      </div>
+    </div>
+
+    <!-- Resizer -->
+    <div class="resizer" id="resizer"></div>
+
+    <!-- Preview Column -->
+    <div class="col-preview">
+      <div class="preview-header">
+        <div class="preview-title">Live Preview</div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);margin-right:6px;">Auto-refresh</label>
+          <input type="checkbox" id="autoRefresh" checked />
+        </div>
+      </div>
+      <iframe id="preview" sandbox="allow-scripts allow-same-origin"></iframe>
+    </div>
+  </div>
+
+  <!-- Collapsible Chat Sidebar (Perplexity sonar-pro) -->
+  <aside class="chat-sidebar" id="chatSidebar">
+    <div class="chat-header">
+      <div class="chat-title">AI Chat • Perplexity sonar-pro</div>
+      <div class="chat-settings">
+        <input id="apiKeyInput" class="input" type="password" placeholder="Perplexity API key" style="width:210px;" />
+        <input id="proxyInput" class="input" type="text" placeholder="Proxy base URL (optional)" style="width:210px;" />
+        <button class="btn" id="btnCloseChat">Close</button>
+      </div>
+    </div>
+    <div class="chat-messages" id="chatMessages"></div>
+    <div class="chat-input">
+      <textarea id="chatInput" placeholder="Ask anything about your code..."></textarea>
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
+        <div style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);">
+          <label>Temp</label>
+          <input id="tempInput" class="input" type="number" step="0.1" min="0" max="2" value="0.7" style="width:70px;" />
+          <label>Max tokens</label>
+          <input id="maxTokensInput" class="input" type="number" step="1" min="16" max="4096" value="512" style="width:80px;" />
+          <label><input type="checkbox" id="includeCodeToggle" checked /> Include code</label>
+        </div>
+        <button class="btn primary" id="btnSend">Send</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Sonar-pro Quality Panel -->
+  <section class="quality-panel" id="qualityPanel">
+    <div class="quality-header">
+      <div>sonar-pro • Code Quality Report</div>
+      <div>
+        <button class="btn" id="btnCopyReport">Copy</button>
+        <button class="btn" id="btnCloseQuality">Close</button>
+      </div>
+    </div>
+    <div class="quality-body" id="qualityBody"></div>
+  </section>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // Utility: simple debounce
+    function debounce(fn, wait) {
+      let t = null;
+      return function() {
+        const ctx = this; const args = arguments;
+        clearTimeout(t);
+        t = setTimeout(() => fn.apply(ctx, args), wait);
+      }
+    }
+
+    // Default project files
+    const DEFAULT_FILES = {
+      'index.html': `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Starter</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Welcome 👋</h1>
+      <p>Edit files and see changes live on the right.</p>
+      <button id="actionBtn">Click me</button>
+    </main>
+    <script src="script.js"></script>
+  </body>
+</html>`,
+      'style.css': `:root { --brand: #6ea8fe; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+main { padding: 24px; }
+h1 { color: var(--brand); }
+button { padding: 10px 14px; border-radius: 8px; border: 1px solid #c9d7ff; background: #eef3ff; cursor: pointer; }
+button:hover { filter: brightness(0.97); }`,
+      'script.js': `/* Example JS */
+const state = { clicks: 0 };
+
+function update() {
+  const btn = document.getElementById('actionBtn');
+  if (btn) btn.textContent = 'Clicked ' + state.clicks + ' times';
+}
+
+function onReady() {
+  const btn = document.getElementById('actionBtn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    state.clicks++;
+    update();
+    console.log('Button clicked!');
+  });
+  update();
+}
+
+document.addEventListener('DOMContentLoaded', onReady);`
+    };
+
+    // State
+    const STORAGE_KEY_FILES = 'webide.files.v1';
+    const STORAGE_KEY_ACTIVE = 'webide.active.v1';
+    const STORAGE_KEY_SETTINGS = 'webide.settings.v1';
+    const STORAGE_KEY_CHAT = 'webide.chat.v1';
+
+    let files = loadFiles();
+    let activeFile = localStorage.getItem(STORAGE_KEY_ACTIVE) || 'index.html';
+    if (!files[activeFile]) activeFile = 'index.html';
+
+    // Elements
+    const tabsEl = document.getElementById('tabs');
+    const editorHost = document.getElementById('editorHost');
+    const resizer = document.getElementById('resizer');
+    const preview = document.getElementById('preview');
+    const autoRefreshEl = document.getElementById('autoRefresh');
+    const statusText = document.getElementById('statusText');
+    const cursorInfo = document.getElementById('cursorInfo');
+    const fileMeta = document.getElementById('fileMeta');
+
+    // Toolbar buttons
+    const btnRun = document.getElementById('btnRun');
+    const btnAnalyze = document.getElementById('btnAnalyze');
+    const btnChat = document.getElementById('btnChat');
+    const btnSave = document.getElementById('btnSave');
+    const btnReset = document.getElementById('btnReset');
+    const btnLoadSample = document.getElementById('btnLoadSample');
+
+    // Chat UI
+    const chatSidebar = document.getElementById('chatSidebar');
+    const chatMessages = document.getElementById('chatMessages');
+    const chatInput = document.getElementById('chatInput');
+    const btnSend = document.getElementById('btnSend');
+    const btnCloseChat = document.getElementById('btnCloseChat');
+    const apiKeyInput = document.getElementById('apiKeyInput');
+    const proxyInput = document.getElementById('proxyInput');
+    const tempInput = document.getElementById('tempInput');
+    const maxTokensInput = document.getElementById('maxTokensInput');
+    const includeCodeToggle = document.getElementById('includeCodeToggle');
+
+    // Quality panel
+    const qualityPanel = document.getElementById('qualityPanel');
+    const qualityBody = document.getElementById('qualityBody');
+    const btnCloseQuality = document.getElementById('btnCloseQuality');
+    const btnCopyReport = document.getElementById('btnCopyReport');
+
+    const toast = document.getElementById('toast');
+
+    // Initialize editor
+    const editor = CodeMirror(editorHost, {
+      value: files[activeFile] || '',
+      mode: modeFor(activeFile),
+      theme: 'material-darker',
+      lineNumbers: true,
+      styleActiveLine: true,
+      autoCloseBrackets: true,
+      matchBrackets: true,
+      indentUnit: 2,
+      tabSize: 2,
+      extraKeys: {
+        'Ctrl-Enter': () => updatePreview(),
+        'Cmd-Enter': () => updatePreview()
+      }
+    });
+
+    editor.on('cursorActivity', () => {
+      const pos = editor.getCursor();
+      cursorInfo.textContent = `Ln ${pos.line + 1}, Col ${pos.ch + 1}`;
+    });
+
+    editor.on('change', debounce(() => {
+      files[activeFile] = editor.getValue();
+      persistFiles();
+      status('Edited ' + activeFile);
+      if (autoRefreshEl.checked) updatePreview();
+    }, 250));
+
+    // Tabs
+    function renderTabs() {
+      tabsEl.innerHTML = '';
+      Object.keys(files).forEach(name => {
+        const b = document.createElement('button');
+        b.className = 'tab' + (name === activeFile ? ' active' : '');
+        b.textContent = name;
+        b.onclick = () => switchFile(name);
+        tabsEl.appendChild(b);
+      });
+      fileMeta.textContent = metaFor(activeFile);
+    }
+
+    function switchFile(name) {
+      if (!files[name]) return;
+      files[activeFile] = editor.getValue();
+      activeFile = name;
+      localStorage.setItem(STORAGE_KEY_ACTIVE, activeFile);
+      editor.setOption('mode', modeFor(activeFile));
+      editor.setValue(files[activeFile]);
+      renderTabs();
+      if (autoRefreshEl.checked) updatePreview();
+    }
+
+    function modeFor(name) {
+      if (name.endsWith('.html')) return 'htmlmixed';
+      if (name.endsWith('.css')) return 'css';
+      if (name.endsWith('.js')) return 'javascript';
+      return 'javascript';
+    }
+
+    function metaFor(name) {
+      if (name.endsWith('.html')) return 'UTF-8 LF | HTML';
+      if (name.endsWith('.css')) return 'UTF-8 LF | CSS';
+      if (name.endsWith('.js')) return 'UTF-8 LF | JavaScript';
+      return 'UTF-8 LF';
+    }
+
+    function loadFiles() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY_FILES);
+        if (!raw) return { ...DEFAULT_FILES };
+        const parsed = JSON.parse(raw);
+        // Ensure defaults exist
+        return { ...DEFAULT_FILES, ...parsed };
+      } catch (e) {
+        return { ...DEFAULT_FILES };
+      }
+    }
+
+    function persistFiles() {
+      localStorage.setItem(STORAGE_KEY_FILES, JSON.stringify(files));
+    }
+
+    // Resizer logic
+    (function initResizer(){
+      const main = document.querySelector('.main');
+      let isDown = false;
+      let startX = 0;
+      let startLeftWidth = 0;
+
+      resizer.addEventListener('mousedown', (e) => {
+        isDown = true;
+        startX = e.clientX;
+        const leftRect = document.querySelector('.col-editor').getBoundingClientRect();
+        startLeftWidth = leftRect.width;
+        document.body.style.cursor = 'col-resize';
+        e.preventDefault();
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isDown) return;
+        const dx = e.clientX - startX;
+        const total = main.getBoundingClientRect().width - 6; // minus resizer
+        let left = Math.min(Math.max(startLeftWidth + dx, 240), total - 320);
+        const leftFr = left / total;
+        main.style.gridTemplateColumns = leftFr + 'fr 6px ' + (1 - leftFr) + 'fr';
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (!isDown) return;
+        isDown = false;
+        document.body.style.cursor = '';
+      });
+    })();
+
+    // Preview rendering
+    const updatePreview = debounce(() => {
+      try {
+        // Ensure latest editor content is captured
+        files[activeFile] = editor.getValue();
+
+        const indexHtml = files['index.html'] || '';
+        const css = files['style.css'] || '';
+        const js = files['script.js'] || '';
+
+        const parsed = new DOMParser().parseFromString(indexHtml, 'text/html');
+        // Inject styles
+        const styleEl = parsed.createElement('style');
+        styleEl.textContent = css;
+        parsed.head.appendChild(styleEl);
+        // Inject script
+        const scriptEl = parsed.createElement('script');
+        scriptEl.textContent = js;
+        parsed.body.appendChild(scriptEl);
+
+        const finalHtml = '<!doctype html>\n' + parsed.documentElement.outerHTML;
+        preview.srcdoc = finalHtml;
+        status('Preview updated');
+      } catch (e) {
+        status('Preview error: ' + e.message);
+      }
+    }, 80);
+
+    btnRun.addEventListener('click', () => updatePreview());
+    autoRefreshEl.addEventListener('change', () => { if (autoRefreshEl.checked) updatePreview(); });
+
+    // Toolbar actions
+    btnSave.addEventListener('click', () => {
+      files[activeFile] = editor.getValue();
+      persistFiles();
+      status('Saved locally');
+      toastMsg('Project saved to browser storage');
+    });
+
+    btnReset.addEventListener('click', () => {
+      if (!confirm('Reset to default starter? This will overwrite current unsaved changes.')) return;
+      files = { ...DEFAULT_FILES };
+      persistFiles();
+      switchFile('index.html');
+      updatePreview();
+      status('Project reset');
+    });
+
+    btnLoadSample.addEventListener('click', () => {
+      const sample = {
+        'index.html': `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Demo</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <canvas id="c" width="320" height="200"></canvas>
+    <script src="script.js"></script>
+  </body>
+</html>`,
+        'style.css': `html, body { height: 100%; margin: 0; background: radial-gradient(1200px 600px at 10% 10%, #0e1628, #0b0f15); }
+canvas { display: block; margin: 24px auto; border: 1px solid #21314a; background: #06101b; }`,
+        'script.js': `const ctx = document.getElementById('c').getContext('2d');
+let t = 0; function loop(){ t+=0.03; draw(t); requestAnimationFrame(loop); } loop();
+function draw(time){
+  const w = ctx.canvas.width, h = ctx.canvas.height; ctx.clearRect(0,0,w,h);
+  for (let i=0;i<200;i++){
+    const x = (Math.sin(i*0.15 + time)*0.4 + 0.5) * w;
+    const y = (Math.cos(i*0.12 + time)*0.4 + 0.5) * h;
+    const r = 3 + (Math.sin(i*0.2+time)*2);
+    ctx.fillStyle = ` + "`hsl(${(i*7)%360},70%,60%)`" + `;
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  }
+}`
+      };
+      files = sample;
+      persistFiles();
+      switchFile('index.html');
+      updatePreview();
+      status('Loaded sample project');
+    });
+
+    // Initial render
+    renderTabs();
+    editor.refresh();
+    updatePreview();
+
+    // Status helper
+    let statusTimer = null;
+    function status(msg) {
+      statusText.textContent = msg;
+      clearTimeout(statusTimer);
+      statusTimer = setTimeout(() => statusText.textContent = 'Ready', 1200);
+    }
+
+    function toastMsg(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2000);
+    }
+
+    // Chat Sidebar logic
+    btnChat.addEventListener('click', () => chatSidebar.classList.toggle('open'));
+    btnCloseChat.addEventListener('click', () => chatSidebar.classList.remove('open'));
+
+    // Restore chat/settings from storage
+    (function restoreSettings(){
+      try {
+        const cfg = JSON.parse(localStorage.getItem(STORAGE_KEY_SETTINGS) || '{}');
+        if (cfg.apiKey) apiKeyInput.value = cfg.apiKey;
+        if (cfg.proxy) proxyInput.value = cfg.proxy;
+        if (cfg.temperature != null) tempInput.value = cfg.temperature;
+        if (cfg.maxTokens != null) maxTokensInput.value = cfg.maxTokens;
+        if (cfg.includeCode != null) includeCodeToggle.checked = cfg.includeCode;
+      } catch {}
+    })();
+
+    function saveSettings() {
+      const cfg = {
+        apiKey: apiKeyInput.value.trim(),
+        proxy: proxyInput.value.trim(),
+        temperature: Number(tempInput.value),
+        maxTokens: Number(maxTokensInput.value),
+        includeCode: !!includeCodeToggle.checked
+      };
+      localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(cfg));
+    }
+
+    apiKeyInput.addEventListener('change', saveSettings);
+    proxyInput.addEventListener('change', saveSettings);
+    tempInput.addEventListener('change', saveSettings);
+    maxTokensInput.addEventListener('change', saveSettings);
+    includeCodeToggle.addEventListener('change', saveSettings);
+
+    // Load chat history
+    (function restoreChat(){
+      try {
+        const hist = JSON.parse(localStorage.getItem(STORAGE_KEY_CHAT) || '[]');
+        hist.forEach(m => addChatMessage(m.role, m.content));
+      } catch {}
+    })();
+
+    function persistChat(role, content) {
+      try {
+        const hist = JSON.parse(localStorage.getItem(STORAGE_KEY_CHAT) || '[]');
+        hist.push({ role, content });
+        localStorage.setItem(STORAGE_KEY_CHAT, JSON.stringify(hist));
+      } catch {}
+    }
+
+    function addChatMessage(role, content) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + (role === 'user' ? 'user' : 'ai');
+      const small = document.createElement('small');
+      small.className = 'role';
+      small.textContent = role === 'user' ? 'You' : 'Assistant';
+      const pre = document.createElement('div');
+      pre.textContent = content;
+      div.appendChild(small);
+      div.appendChild(pre);
+      chatMessages.appendChild(div);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    btnSend.addEventListener('click', async () => {
+      const content = chatInput.value.trim();
+      if (!content) return;
+      const apiKey = apiKeyInput.value.trim();
+      if (!apiKey) {
+        toastMsg('Please paste your Perplexity API key first');
+        return;
+      }
+
+      const temperature = Number(tempInput.value) || 0.7;
+      const maxTokens = Number(maxTokensInput.value) || 512;
+      const includeCode = !!includeCodeToggle.checked;
+
+      addChatMessage('user', content);
+      persistChat('user', content);
+      chatInput.value = '';
+
+      const context = includeCode ? buildProjectContext() : '';
+      const userPrompt = includeCode ? `${content}\n\nProject files:\n${context}` : content;
+
+      try {
+        const resp = await perplexityChat({
+          apiKey,
+          proxy: (proxyInput.value || '').trim(),
+          model: 'sonar-pro',
+          temperature,
+          max_tokens: maxTokens,
+          messages: [
+            { role: 'system', content: 'You are an expert coding assistant living inside a web IDE. Be concise, actionable, and reference code blocks where helpful.' },
+            { role: 'user', content: userPrompt }
+          ]
+        });
+
+        const text = resp && resp.choices && resp.choices[0] && resp.choices[0].message && resp.choices[0].message.content
+          ? resp.choices[0].message.content
+          : JSON.stringify(resp, null, 2);
+        addChatMessage('assistant', text);
+        persistChat('assistant', text);
+      } catch (err) {
+        const msg = 'Chat error: ' + (err && err.message ? err.message : String(err));
+        addChatMessage('assistant', msg);
+        toastMsg('Chat failed (check API key / CORS / proxy)');
+      }
+    });
+
+    function buildProjectContext() {
+      try {
+        const names = Object.keys(files);
+        return names.map(n => `--- ${n} ---\n` + files[n]).join('\n\n');
+      } catch { return ''; }
+    }
+
+    async function perplexityChat({ apiKey, proxy, model, temperature, max_tokens, messages }) {
+      const urlBase = proxy || 'https://api.perplexity.ai';
+      const url = urlBase.replace(/\/$/, '') + '/chat/completions';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + apiKey
+        },
+        body: JSON.stringify({ model, temperature, max_tokens, messages, stream: false })
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error('HTTP ' + res.status + ' — ' + txt);
+      }
+      return res.json();
+    }
+
+    // sonar-pro analysis (static client-side checks)
+    btnAnalyze.addEventListener('click', () => runSonarPro());
+    btnCloseQuality.addEventListener('click', () => qualityPanel.classList.remove('open'));
+    btnCopyReport.addEventListener('click', async () => {
+      try {
+        const text = qualityBody.innerText.trim();
+        await navigator.clipboard.writeText(text);
+        toastMsg('Report copied to clipboard');
+      } catch { toastMsg('Copy failed'); }
+    });
+
+    function runSonarPro() {
+      files[activeFile] = editor.getValue();
+      const js = files['script.js'] || '';
+      const issues = [];
+
+      // 1) Syntax and basic lint via JSHint
+      try {
+        const ok = self.JSHINT && self.JSHINT(js, {
+          esversion: 11,
+          undef: true,
+          unused: true,
+          asi: false,
+          browser: true
+        });
+        if (!ok && self.JSHINT && Array.isArray(self.JSHINT.errors)) {
+          self.JSHINT.errors.forEach(e => {
+            if (!e) return;
+            const sev = (e.code || '').startsWith('E') ? 'error' : 'warning';
+            issues.push({
+              severity: sev,
+              message: e.reason || 'Issue',
+              line: e.line || null,
+              column: e.character || null
+            });
+          });
+        }
+      } catch (e) {
+        issues.push({ severity: 'error', message: 'JSHint failed: ' + e.message, line: null, column: null });
+      }
+
+      // 2) Additional smells via AST (acorn)
+      try {
+        const ast = self.acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'script', locations: true });
+
+        // 2a) var usage
+        const varRegex = /(^|\n)\s*var\s+([A-Za-z_$][\w$]*)/g;
+        let m;
+        while ((m = varRegex.exec(js)) !== null) {
+          const line = js.substring(0, m.index).split('\n').length;
+          issues.push({ severity: 'warning', message: `Avoid var; prefer let/const (variable: ${m[2]})`, line, column: 1 });
+        }
+
+        // 2b) console.log usage
+        const consoleRegex = /(^|\n).*console\.(log|debug|trace)\s*\(/g;
+        while ((m = consoleRegex.exec(js)) !== null) {
+          const line = js.substring(0, m.index).split('\n').length;
+          issues.push({ severity: 'info', message: 'console usage detected; remove for production', line, column: 1 });
+        }
+
+        // 2c) Function length and nesting
+        let maxNesting = 0;
+        function walkNode(node, depth) {
+          maxNesting = Math.max(maxNesting, depth);
+          const isBlock = node.type === 'BlockStatement' || node.type === 'Program';
+          if (isBlock && node.body && Array.isArray(node.body)) {
+            node.body.forEach(child => {
+              let nextDepth = depth;
+              if (child && (
+                child.type === 'IfStatement' || child.type === 'ForStatement' || child.type === 'ForOfStatement' ||
+                child.type === 'ForInStatement' || child.type === 'WhileStatement' || child.type === 'DoWhileStatement' ||
+                child.type === 'SwitchStatement' || child.type === 'TryStatement'
+              )) nextDepth = depth + 1;
+              walkNode(child, nextDepth);
+            });
+          }
+          // Recurse into specific children
+          for (const key in node) {
+            if (!Object.prototype.hasOwnProperty.call(node, key)) continue;
+            const val = node[key];
+            if (val && typeof val === 'object') {
+              if (Array.isArray(val)) val.forEach(v => v && typeof v.type === 'string' && walkNode(v, depth));
+              else if (typeof val.type === 'string') walkNode(val, depth);
+            }
+          }
+        }
+        walkNode(ast, 0);
+        if (maxNesting >= 5) {
+          issues.push({ severity: 'warning', message: `Deep nesting detected (level ${maxNesting}) — consider refactoring`, line: null, column: null });
+        }
+
+        // Function length check
+        self.acornWalk.simple(ast, {
+          Function(node) {
+            const start = node.loc.start.line;
+            const end = node.loc.end.line;
+            const len = end - start + 1;
+            if (len >= 50) {
+              issues.push({ severity: 'warning', message: `Function is long (${len} lines) — consider splitting`, line: start, column: 1 });
+            }
+          }
+        });
+      } catch (e) {
+        issues.push({ severity: 'error', message: 'Parse failed: ' + e.message, line: null, column: null });
+      }
+
+      // 3) Missing semicolons (simple heuristic)
+      const lines = (files['script.js'] || '').split('\n');
+      lines.forEach((ln, i) => {
+        const t = ln.trim();
+        if (!t) return;
+        if (/^\/?\//.test(t)) return; // skip comments
+        if (/[;{}:]$/.test(t)) return; // ends safely
+        if (/^(if|for|while|switch|function|class|else|try|catch|finally)\b/.test(t)) return;
+        if (/^\)/.test(t)) return;
+        // likely missing semicolon at end of statement
+        if (/\w|\)|\]|\"|\'|\`/.test(t.charAt(t.length - 1))) {
+          issues.push({ severity: 'info', message: 'Possible missing semicolon', line: i + 1, column: t.length });
+        }
+      });
+
+      renderQuality(issues);
+      qualityPanel.classList.add('open');
+      status(`sonar-pro: ${issues.length} issue(s)`);
+    }
+
+    function renderQuality(issues) {
+      if (!issues.length) {
+        qualityBody.innerHTML = '<div class="issue info">No issues found 🎉</div>';
+        return;
+      }
+      qualityBody.innerHTML = '';
+      issues.forEach((it, idx) => {
+        const div = document.createElement('div');
+        div.className = 'issue ' + (it.severity || 'info');
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = `${it.severity?.toUpperCase?.() || 'INFO'} ${it.line ? ' • Line ' + it.line : ''}${it.column ? ':' + it.column : ''}`;
+        const msg = document.createElement('div');
+        msg.textContent = it.message || 'Issue';
+        div.appendChild(meta);
+        div.appendChild(msg);
+        qualityBody.appendChild(div);
+      });
+    }
+  </script>
+</body>
+</html>
